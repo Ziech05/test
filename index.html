@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="id">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Catatan Keuangan Modern</title>
+        <link rel="stylesheet" href="style.css">
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script
+            src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="logo">💰</div>
+                <h1>Catatan Keuangan Modern</h1>
+            </div>
+
+            <div class="dashboard">
+                <div class="summary-card balance">
+                    <h3>Saldo</h3>
+                    <div class="amount" id="balance">Rp 0</div>
+                </div>
+                <div class="summary-card income">
+                    <h3>Total Pemasukan</h3>
+                    <div class="amount" id="total-income">Rp 0</div>
+                </div>
+                <div class="summary-card expense">
+                    <h3>Total Pengeluaran</h3>
+                    <div class="amount" id="total-expense">Rp 0</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title">
+                    <span>📊</span> Ringkasan Keuangan
+                </h2>
+                <div class="chart-container">
+                    <canvas id="financeChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title">
+                    <span>➕</span> Tambah Transaksi
+                </h2>
+                <div class="form-grid">
+                    <input type="text" id="desc"
+                        placeholder="Deskripsi transaksi" />
+                    <input type="number" id="amount" placeholder="Jumlah (Rp)"
+                        min="0" step="1000" />
+                    <input type="date" id="date" />
+                    <select id="type">
+                        <option value="income">Pemasukan</option>
+                        <option value="expense">Pengeluaran</option>
+                    </select>
+                </div>
+                <div class="btn-group">
+                    <button class="btn-primary" onclick="addData()">
+                        <span>➕</span> Tambah Transaksi
+                    </button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title">
+                    <span>📋</span> Daftar Transaksi
+                </h2>
+
+                <div class="filters">
+                    <input type="text" id="search"
+                        placeholder="Cari transaksi..."
+                        onkeyup="filterData()" />
+                    <select id="filter-type" onchange="filterData()">
+                        <option value>Semua Tipe</option>
+                        <option value="income">Pemasukan</option>
+                        <option value="expense">Pengeluaran</option>
+                    </select>
+                    <input type="date" id="filter-date-from"
+                        onchange="filterData()" />
+                    <input type="date" id="filter-date-to"
+                        onchange="filterData()" />
+                    <button class="btn-secondary" onclick="clearFilters()">
+                        <span>🔄</span> Reset Filter
+                    </button>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Deskripsi</th>
+                            <th>Jumlah</th>
+                            <th>Tipe</th>
+                            <th>Tanggal</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody"></tbody>
+                </table>
+
+                <div id="empty-state" class="empty-state"
+                    style="display: none;">
+                    <div>📭</div>
+                    <h3>Tidak ada transaksi</h3>
+                    <p>Mulai dengan menambahkan transaksi pertama Anda</p>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        const SUPABASE_URL = "URL_SUPABASE_KAMU";
+        const SUPABASE_KEY = "ANON_KEY_KAMU";
+
+        const supabaseClient = supabase.createClient(
+            SUPABASE_URL,
+            SUPABASE_KEY
+        );
+
+        let data = [];
+        let filteredData = [];
+        let financeChart = null;
+
+        async function loadData() {
+            const { data: rows, error } = await supabaseClient
+                .from("transactions")
+                .select("*")
+                .order("created_at", { ascending: false });
+
+            if (error) {
+                console.error(error);
+                alert("Gagal mengambil data");
+                return;
+            }
+
+            const latest = {};
+            rows.forEach(r => {
+                if (!latest[r.group_id] || latest[r.group_id].version < r.version) {
+                latest[r.group_id] = r;
+                }
+            });
+
+            data = Object.values(latest);
+            filteredData = [...data];
+            calculateSummary();
+            render();
+            }
+
+        // Format currency
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('id-ID', {
+                style: 'currency',
+                currency: 'IDR',
+                minimumFractionDigits: 0
+            }).format(amount);
+        }
+
+        // Format date
+        function formatDate(dateString) {
+            const options = { year: 'numeric', month: 'short', day: 'numeric' };
+            return new Date(dateString).toLocaleDateString('id-ID', options);
+        }
+
+        // Calculate summary
+        function calculateSummary() {
+            const totalIncome = data
+                .filter(item => item.type === 'income')
+                .reduce((sum, item) => sum + item.amount, 0);
+                
+            const totalExpense = data
+                .filter(item => item.type === 'expense')
+                .reduce((sum, item) => sum + item.amount, 0);
+                
+            const balance = totalIncome - totalExpense;
+            
+            document.getElementById('balance').textContent = formatCurrency(balance);
+            document.getElementById('total-income').textContent = formatCurrency(totalIncome);
+            document.getElementById('total-expense').textContent = formatCurrency(totalExpense);
+            
+            updateChart(totalIncome, totalExpense);
+        }
+
+        // Update chart
+        function updateChart(income, expense) {
+            const ctx = document.getElementById('financeChart').getContext('2d');
+            
+            if (financeChart) {
+                financeChart.destroy();
+            }
+            
+            financeChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Pemasukan', 'Pengeluaran'],
+                    datasets: [{
+                        data: [income, expense],
+                        backgroundColor: ['#00c853', '#ff4141'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                color: '#e3e3e3',
+                                font: {
+                                    size: 14
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.label}: ${formatCurrency(context.raw)}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Render table
+        function render() {
+            const tbody = document.getElementById("tbody");
+            const emptyState = document.getElementById("empty-state");
+            
+            if (filteredData.length === 0) {
+                tbody.innerHTML = "";
+                emptyState.style.display = "block";
+                return;
+            }
+            
+            emptyState.style.display = "none";
+            tbody.innerHTML = "";
+            
+            // Sort by date (newest first)
+            filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
+            
+            filteredData.forEach((item, i) => {
+                
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>${item.description}</td>
+                    <td>${formatCurrency(item.amount)}</td>
+                    <td><span class="type-badge ${item.type === 'income' ? 'type-income' : 'type-expense'}">${item.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}</span></td>
+                    <td>${formatDate(item.date)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Add new transaction
+        async function addData() {
+            const description = document.getElementById("desc").value.trim();
+            const amount = parseInt(document.getElementById("amount").value);
+            const date = document.getElementById("date").value;
+            const type = document.getElementById("type").value;
+
+            if (!description || !amount || !date) {
+                alert("Data tidak lengkap");
+                return;
+            }
+
+            const group_id = crypto.randomUUID();
+
+            const { error } = await supabaseClient
+                .from("transactions")
+                .insert([{
+                group_id,
+                version: 1,
+                description,
+                amount,
+                type,
+                date
+                }]);
+
+            if (error) {
+                console.error("INSERT ERROR:", error);
+                alert(error.message);
+                return;
+            }
+
+            clearForm();
+            await loadData();
+        }
+
+        // Clear form
+        function clearForm() {
+            document.getElementById("desc").value = "";
+            document.getElementById("amount").value = "";
+            document.getElementById("date").value = "";
+            document.getElementById("type").value = "income";
+        }
+
+        // Filter data
+        function filterData() {
+            const searchTerm = document.getElementById("search").value.toLowerCase();
+            const typeFilter = document.getElementById("filter-type").value;
+            const dateFrom = document.getElementById("filter-date-from").value;
+            const dateTo = document.getElementById("filter-date-to").value;
+            
+            filteredData = data.filter(item => {
+                const matchesSearch = item.description.toLowerCase().includes(searchTerm);
+                const matchesType = !typeFilter || item.type === typeFilter;
+                const matchesDateFrom = !dateFrom || new Date(item.date) >= new Date(dateFrom);
+                const matchesDateTo = !dateTo || new Date(item.date) <= new Date(dateTo);
+                
+                return matchesSearch && matchesType && matchesDateFrom && matchesDateTo;
+            });
+            
+            render();
+        }
+
+        // Clear filters
+        function clearFilters() {
+            document.getElementById("search").value = "";
+            document.getElementById("filter-type").value = "";
+            document.getElementById("filter-date-from").value = "";
+            document.getElementById("filter-date-to").value = "";
+            filteredData = [...data];
+            render();
+        }
+
+        // Initialize
+        async function init() {
+            document.getElementById("date").value =
+                new Date().toISOString().split("T")[0];
+
+            await loadData();
+        }
+
+        // Run initialization when page loads
+        window.onload = init;
+    </script>
+    </body>
+</html>
